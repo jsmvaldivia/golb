@@ -28,11 +28,13 @@ func TestNewLoadBalancer(t *testing.T) {
 func TestForwardToNextServer(t *testing.T) {
 	// Start two test backend servers
 	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend1"))
 	}))
 	defer backend1.Close()
 
 	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("backend2"))
 	}))
 	defer backend2.Close()
@@ -41,21 +43,25 @@ func TestForwardToNextServer(t *testing.T) {
 	lb := NewLoadBalancer(servers)
 
 	req := httptest.NewRequest("GET", "/", nil)
-	recorder := httptest.NewRecorder()
 
-	// First request should go to backend1
+	recorder := httptest.NewRecorder()
 	lb.ForwardToNextServer(recorder, req)
 	resp := recorder.Result()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
 	if string(body) != "backend1" {
 		t.Errorf("expected backend1, got %s", string(body))
 	}
 
-	// Second request should go to backend2
 	recorder2 := httptest.NewRecorder()
 	lb.ForwardToNextServer(recorder2, req)
 	resp2 := recorder2.Result()
 	body2, _ := io.ReadAll(resp2.Body)
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp2.StatusCode)
+	}
 	if string(body2) != "backend2" {
 		t.Errorf("expected backend2, got %s", string(body2))
 	}

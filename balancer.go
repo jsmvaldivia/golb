@@ -28,7 +28,7 @@ func NewLoadBalancer(servers []string) *LoadBalancer {
 }
 
 func (lb *LoadBalancer) NextServer() *url.URL {
-	idx := atomic.AddInt64(&lb.current, 1)
+	idx := atomic.AddInt64(&lb.current, 1) - 1
 	return lb.servers[int(idx)%len(lb.servers)]
 }
 
