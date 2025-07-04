@@ -7,11 +7,12 @@ import (
 	"net/url"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestNewLoadBalancer(t *testing.T) {
 	servers := []string{"http://localhost:8080", "http://localhost:8081"}
-	lb := NewLoadBalancer(servers)
+	lb := NewLoadBalancer(servers, false)
 
 	if len(lb.servers) != len(servers) {
 		t.Fatalf("expected %d servers, got %d", len(servers), len(lb.servers))
@@ -40,7 +41,7 @@ func TestForwardToNextServer(t *testing.T) {
 	defer backend2.Close()
 
 	servers := []string{backend1.URL, backend2.URL}
-	lb := NewLoadBalancer(servers)
+	lb := NewLoadBalancer(servers, false)
 
 	req := httptest.NewRequest("GET", "/", nil)
 
@@ -64,5 +65,71 @@ func TestForwardToNextServer(t *testing.T) {
 	}
 	if string(body2) != "backend2" {
 		t.Errorf("expected backend2, got %s", string(body2))
+	}
+}
+
+func BenchmarkForwardToNextServer(b *testing.B) {
+	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok1"))
+	}))
+	defer backend1.Close()
+
+	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok2"))
+	}))
+	defer backend2.Close()
+
+	backend3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok3"))
+	}))
+	defer backend3.Close()
+
+	servers := []string{backend1.URL, backend2.URL, backend3.URL}
+	lb := NewLoadBalancer(servers, false)
+
+	req := httptest.NewRequest("GET", "/", nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		recorder := httptest.NewRecorder()
+		lb.ForwardToNextServer(recorder, req)
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ping" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("pong"))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer healthy.Close()
+
+	unhealthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer unhealthy.Close()
+
+	servers := []string{healthy.URL, unhealthy.URL}
+	lb := NewLoadBalancer(servers, true)
+
+	lb.HealthCheck(true, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond) // Give time for health check goroutine to run
+
+	for _, u := range lb.servers {
+		if u.String() == healthy.URL {
+			if !lb.healthMap[u] {
+				t.Errorf("expected healthy server to be marked healthy")
+			}
+		} else if u.String() == unhealthy.URL {
+			if lb.healthMap[u] {
+				t.Errorf("expected unhealthy server to be marked unhealthy")
+			}
+		}
 	}
 }
